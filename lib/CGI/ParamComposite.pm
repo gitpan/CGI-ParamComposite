@@ -79,7 +79,7 @@ This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.8.3 or,
 at your option, any later version of Perl 5 you may have available.
 
-=HEAD1 METHODS
+=head1 METHODS
 
 =cut
 
@@ -89,7 +89,7 @@ use strict;
 use CGI;
 use Symbol;
 use constant DEBUG => 0;
-our $VERSION = '0.01';
+our $VERSION = '0.011';
 
 my $self = undef;
 

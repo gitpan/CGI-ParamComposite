@@ -5,8 +5,12 @@ use ExtUtils::MakeMaker;
 WriteMakefile(
     NAME              => 'CGI::ParamComposite',
     VERSION_FROM      => 'lib/CGI/ParamComposite.pm', # finds $VERSION
-    PREREQ_PM         => {}, # e.g., Module::Name => 1.1
+    PREREQ_PM         => {
+                           CGI => 0,
+                           Data::Dumper => 0,
+                           Symbol => 0,
+                         }, # e.g., Module::Name => 1.1
     ($] >= 5.005 ?     ## Add these new keywords supported since 5.005
       (ABSTRACT_FROM  => 'lib/CGI/ParamComposite.pm', # retrieve abstract from module
-       AUTHOR         => 'A. U. Thor <allenday@localdomain>') : ()),
+       AUTHOR         => 'Allen Day <allenday@ucla.edu>') : ()),
 );
