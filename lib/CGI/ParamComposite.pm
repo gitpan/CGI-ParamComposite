@@ -7,38 +7,35 @@ CGI::ParamComposite - Convert .-delimited CGI parameters to Perl classes/objects
   use CGI;
   use CGI::ParamComposite;
   my $q = CGI->new();
-  my $c = CGI::ParamComposite->new( populate => 0 , cgi => $q );
+  $q->param(-name=>'food.vegetable',-value=>['tomato','spinach']);
+  $q->param(-name=>'food.meat',     -value=>['pork','beef','fish']);
+  $q->param(-name=>'food.meat.pork',-value=>'bacon');
+
+  my $c = CGI::ParamComposite->new( cgi => $q );
 
   #Dumper([$composite->roots()]) returns (minor formatting):
-  $VAR1 = [
-     bless( {}, 'CGI::ParamComposite' )
-  ];
-
-
-  my $c = CGI::ParamComposite->new( populate => 1 , cgi => $q , package => 'market');
-
-  #Dumper([$composite->roots()]) returns (minor formatting):
-  $VAR1 = [
-    bless( {
-      'food' => bless( {
-        'market::food::meat' => [
-          'pork',
-          'beef',
-          'fish'
-        ],
-        'market::food::vegetable' => [
-          'tomato',
-          'spinach'
-        ]
-      }, 'market::food' )
-    }, 'market' )
-  ];
+  $VAR1 = {
+    'food' => {
+      'meat' => [
+        'pork',
+        'beef',
+        'fish'
+      ],
+      'vegetable' => [
+        'tomato',
+        'spinach'
+      ]
+    }
+  };
 
   #either way, these calls now work:
-  my($market) = $composite->roots();
-  ref($market);                                       #returns "market"
-  ref($market->food);                                 #returns "market::food"
-  join(', ', map {ref($_)} $market->food->children(); #returns "market::food::meat, market::food::vegetable"
+  my($market) = %{ $composite->param() };
+  ref($market);                                       #returns HASH
+  keys(%{ $market->{food} });                         #returns ('meat','vegetable')
+
+  #note that food.meat.pork with throw an error b/c a higher level key, food.meat,
+  #has already had its value set.  the keys are evaluated from least to most
+  #specific (measured by namespace depth, or number of dots)
 
 =head1 DESCRIPTION
 
@@ -53,19 +50,19 @@ in a consistent manner.  I decided to use a hierarchical, dot-delimited conventi
 similar to what you seen in some programming languages.  Now if I see a parameter
 like:
 
-/my.cgi?gbrowse.param.navigation.instructions=1
+  /my.cgi?navigation.instructions=1
 
 I can pretty quickly guess, after not looking at the code for days/weeks/months, that
 this value is somehow affecting the instructions on the Gbrowse navigation page.  In
 my opinion, this is superior to:
 
-/my.cgi?ins=0
+  /my.cgi?ins=0
 
 which had the same effect in an earlier version of the code (negated logic :o).
 
 =head1 SEE ALSO
 
-L<CGI>, L<Symbol>
+L<CGI>
 
 =head1 AUTHOR
 
@@ -87,9 +84,9 @@ package CGI::ParamComposite;
 
 use strict;
 use CGI;
-use Symbol;
+use Data::Dumper;
 use constant DEBUG => 0;
-our $VERSION = '0.011';
+our $VERSION = '0.02';
 
 my $self = undef;
 
@@ -108,13 +105,6 @@ my $self = undef;
                            details.
 
 =cut
-
-sub new {
-  my ($self,@args) = @_;
-
-
-}
-
 
 sub new {
   my($class,%arg) = @_;
@@ -138,102 +128,24 @@ sub new {
 =cut
 
 sub init {
-  my ($self,@args) = @_;
-
-
-}
-sub init {
   my($self,%arg) = @_;
 
-  $self->package($arg{package} || __PACKAGE__);
-  $self->populate($arg{populate});
   $self->cgi($arg{cgi} || new CGI);
 
   return unless $self->cgi->param();
 
-  my %baby = ();
-  my %slot = ();
-  my %mama = ();
+  my %result = ();
 
-  foreach my $p (sort {depth($b) <=> depth($a)} $self->cgi->param()){
-    my @baby = split '\.', $p;
-    unshift @baby, $self->package() if defined($self->package());
-    my $slit  = pop @baby;
+  foreach my $p (sort {depth($a) <=> depth($b)} $self->cgi->param()){
+    my @path = split '\.', $p;
 
-    my @mama = @baby;
+    my @val = $self->cgi->param($p);
 
-    my $baby = join('::',@baby);
-    my $slot = join('::',(@baby,$slit));
-    my $mama = join('::',@mama);
-
-    while(@mama){
-      my $daughter = pop @mama;
-
-      if(@mama && !$baby{ join('::',(@mama,$daughter)) }++){
-        #print "*baby ".join('::',(@mama,$daughter))."\n";
-        $self->packit( join('::',(@mama,$daughter)) );
-      }
-
-      my $mama = join('::',@mama);
-      if(@mama && !$mama{$mama}){
-        #print "$mama\n" if $mama;
-        $self->packit($mama);
-        #print "  ".join('::',(@mama,$daughter))."\n";
-      }
-
-      push @{ $mama{$mama} }, [join('::',(@mama,$daughter)),$daughter];
-    }
-
-    if(!$mama{$slot} && !$slot{$slot}){
-      $self->slotit($slot,$p);
-      $slot{$slot} = $baby;
-    }
+    follow(\@val,\%result,\@path,@path);
   }
 
-  my @eves = ();
-  foreach my $mama (keys %mama){
-    no strict 'refs';
-    #print "$mama\n";
-    push @eves, $mama unless $baby{$mama};
-    #print "  is root\n" unless $baby{$mama};
+  $self->param(\%result);
 
-    my @babies = ();
-    foreach my $baby (@{ $mama{$mama} }){
-      my($pack,$slot) = @$baby;
-      push @babies, $slot;
-
-      my $slotsymbol = qualify(join('::',($mama,$slot))) or die "couldn't qualify symbol for $mama::$slot: $!";
-      *$slotsymbol = sub {
-        my($self) = @_;
-        $self->{$slot} ||= bless {}, $pack;
-        return $self->{$slot};
-      };
-    }
-
-    #print $mama."\n";
-    #print "  ".join(' ',@babies)."\n";
-
-    my $slotsymbol = qualify(join('::',($mama,'children'))) or die "couldn't qualify symbol for $mama::children: $!";
-    *$slotsymbol = sub {
-      my($self) = @_;
-      my @tots = ();
-      foreach my $baby (@babies){
-        push @tots, $self->$baby();
-      }
-      return @tots;
-    };
-  }
-
-  my @roots = ();
-  foreach my $eve (@eves){
-    next unless $eve;
-    my $root =  bless {}, $eve;
-    push @roots, $root;
-  }
-  $self->{'roots'} = \@roots;
-  treeit(\%slot,@roots) if $self->populate();
-
-  1;
 }
 
 =head1 ACCESSORS
@@ -255,117 +167,26 @@ sub cgi {
   return $self->{'cgi'};
 }
 
-=head2 package()
+=head2 param()
 
- Usage   : $obj->package($newval)
- Function: base package to use for composite's subclasses,
-           for instance if package was 'Foo::Bar', and
-           CGI::ParamComposite received the CGI parameter
-           string:
-
-             "baz.boo=1;bad.boo=2"
-
-           packages "Foo::Bar::baz" and "Foo::Bar::boo" would
-           be created (each with a boo() method).
-
-           the value defaults to "CGI::ParamComposite" for
-           safety reasons.
- Returns : value of package (a scalar)
- Args    : on set, new value (a scalar or undef, optional)
-
-
-=cut
-
-sub package {
-  my($self,$val) = @_;
-  $self->{'package'} = $val if defined($val);
-  return $self->{'package'};
-}
-
-=head2 populate()
-
- Usage   : $obj->populate($boolean)
- Function: determines whether or not daughters of the root-level
-           nodes are populated when a new object is built.  defaults
-           to false.  objects/values are still accessible, but not
-           pre-created for you (so a Data::Dumper::Dumper() on 
-           CGI::ParamComposite->roots() won't tell you much, for
-           instance.
- Returns : value of populate (a boolean)
- Args    : on set, new value (a boolean or undef, optional)
-
-
-=cut
-
-sub populate {
-  my($self,$val) = @_;
-  $self->{'populate'} = $val if defined($val);
-  return $self->{'populate'};
-}
-
-
-=head2 roots()
-
- Usage   : $obj->roots()
- Function: call this to get the top-level composite objects.  call children()
-           on each of these (recursively) to get the child objects.
- Returns : value of roots (a list of objects)
+ Usage   : $hashref = $obj->param($newval)
+ Function: get a hahsref of the treeified CGI parameters
+ Returns : a hashref
  Args    : none
 
 
 =cut
 
-sub roots {
-  my($self) = @_;
-  return $self->{'roots'} ? @{ $self->{'roots'} } : ();
+sub param {
+  my($self,$val) = @_;
+  $self->{'param'} = $val if defined($val);
+  return $self->{'param'};
 }
+
 
 =head1 INTERNAL METHODS
 
 You donn't need to touch these.
-
-=head2 packit()
-
- Usage   : internal method, creates a package new() constructor
-
-=cut
-
-sub packit {
-  my ($self,$pack) = @_;
-
-  my $packsymbol = qualify($pack) or die "couldn't qualify symbol for $pack: $!";
-  my $newsymbol = qualify("$pack::new") or die "couldn't qualify symbol for $pack::new: $!";
-  no strict 'refs';
-  *$newsymbol = sub {
-    return bless {}, $packsymbol;
-  };
-}
-
-=head2 slotit()
-
- Usage   : internal method, creates a package get/set accessor
-
-=cut
-
-sub slotit {
-  my ($self,$slot,$p) = @_;
-
-  my $slotsymbol = qualify($slot) or die "couldn't qualify symbol for $slot: $!";
-  my @vals = $self->cgi->param($p);
-  no strict 'refs';
-  *$slotsymbol = sub {
-    my($self,@new) = @_;
-    if(!$self->{$slot} && !@new){
-      @{ $self->{$slot} } = @vals;
-    } elsif(@new){
-      @{ $self->{$slot} } = @new;
-    }
-
-    #@vals = @new if @new;
-    #return @vals;
-    return @{ $self->{$slot} };
-  }
-}
 
 =head2 depth()
 
@@ -382,26 +203,45 @@ sub depth {
   return scalar(@parts);
 }
 
-=head2 treeit()
+=head2 follow()
 
- Usage   : internal method, used to recursively fill slots
-           when L</populate()> returns a true value.
+ Usage   : $obj->follow($value,$hashref,@path);
+ Function: internal method.  recurses into $hashref foreach element of
+           @path, and sets the value of $path[-1] to $value.  for
+           example:
+
+           @path  = qw(foo bar baz);
+           $value  = 'boo';
+           $result = {};
+           follow($value,$result,@path);
+           $result->{foo}->{bar}->{baz}; #evaluates as 'boo'
+
+ Returns : n/a
+ Args    : 1. value to set
+           2. hash to assign value into
+           3. an array defining location of value in hash
+
 
 =cut
 
-sub treeit {
-  my ($slot,@nodes) = @_;
-  foreach my $node (@nodes){
-    foreach my $s (keys %$slot){
-      if(ref($node) eq $slot->{$s}){
-        $node->$s(); #initialize
-        delete($slot->{$s});
-      }
+sub follow {
+  my($v,$r,$p,@path) = @_;
+  my $next = shift @path;
+  if(@path) {
+    $r->{$next} ||= {};
+    follow($v,$r->{$next},$p,@path);
+  } else {
+    if(ref($r) eq 'HASH'){
+      $r->{$next} = $v;
+    } else {
+      my @q = @$p;
+      pop @q;
+      warn sprintf("ignoring %s=%s, value of %s already set to %s",
+                   join('.',(@$p)),$v,
+                   join('.',(@q)), $r
+                   );
     }
-    next unless $node->can('children');
-    treeit($slot,$node->children);
   }
 }
 
 1;
-__END__

@@ -6,10 +6,11 @@
 # change 'tests => 1' to 'tests => last_test_to_print';
 
 BEGIN {
-  use Test::More tests => 16;
+  use Test::More tests => 15;
   use strict;
   use_ok('CGI');
   use_ok('CGI::ParamComposite');
+  use_ok('Data::Dumper');
   use_ok('Symbol');
 };
 
@@ -20,17 +21,16 @@ BEGIN {
 
 ok(my $q = CGI->new());
 ok($q->param(-name=>'food.vegetable',-value=>['tomato','spinach']));
-ok($q->param(-name=>'food.meat',-value=>['pork','beef','fish']));
+ok($q->param(-name=>'food.meat',     -value=>['pork','beef','fish']));
+ok($q->param(-name=>'food.meat.pork',-value=>'bacon'));
 
 ok(my $composite = CGI::ParamComposite->new( cgi => $q));
-ok($composite->roots());
+ok($composite->param());
 ok($composite = CGI::ParamComposite->new( populate => 0 , cgi => $q));
-ok($composite->roots());
+ok($composite->param());
 ok($composite = CGI::ParamComposite->new( populate => 1 , cgi => $q));
-ok($composite->roots());
-ok($composite = CGI::ParamComposite->new( populate => 0 , cgi => $q , package => 'market'));
-ok($composite->roots());
-ok($composite = CGI::ParamComposite->new( populate => 1 , cgi => $q , package => 'market'));
-ok($composite->roots());
+ok($composite->param());
 
+ok($composite->param()->{food}->{meat});
 
+#warn Dumper($composite->param());
